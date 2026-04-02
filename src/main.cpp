@@ -5,6 +5,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <iostream>
+#include <map>
 
 constexpr int windowWidth{ 640 };
 constexpr int windowHeight{ 400 };
@@ -32,6 +33,7 @@ private:
 	vk::raii::Instance instance = nullptr;
 	vk::raii::Context ctx; // for aceessing global vk functions
 	vk::raii::DebugUtilsMessengerEXT debugMessenger = nullptr;
+	vk::raii::PhysicalDevice physicalDevice = nullptr;
 
 	void initWindow() {
 		glfwInit();
@@ -44,6 +46,8 @@ private:
 
 	void initVulkan() {
 		createInstance();
+		setupDebugMessenger();
+		pickPhysicalDevice();
 	}
 
 	void mainLoop() {
@@ -109,7 +113,31 @@ private:
 
 		instance = vk::raii::Instance(ctx, createInfo);
 	};
+	
+	void pickPhysicalDevice() {
+		auto physicalDevices = instance.enumeratePhysicalDevices();
 
+		std::multimap<int, vk::raii::PhysicalDevice> candidates;
+
+		for (auto& physicalDevice : physicalDevices) {
+			auto deviceProperties = physicalDevice.getProperties();
+			auto deviceFeatures = physicalDevice.getFeatures();
+			int score = 0;
+			if (!deviceFeatures.geometryShader) continue;
+			if (deviceProperties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) score += 1000;
+			score += deviceProperties.limits.maxImageDimension2D;
+			candidates.insert(std::make_pair(score, physicalDevice));
+		};
+
+		if(!candidates.empty() && candidates.rbegin()->first > 0) {
+			physicalDevice = candidates.rbegin()->second;	
+		}
+		else {
+			throw std::runtime_error("unable to find suitable gpu");
+		}
+	};
+
+	// extras
 	std::vector<const char*> getExtentions() {
 		uint32_t extCount = 0;
 		auto glfwExtentions = glfwGetRequiredInstanceExtensions(&extCount);
@@ -118,6 +146,28 @@ private:
 		if (enableValidationLayers) extentions.push_back(vk::EXTDebugUtilsExtensionName);
 		return extentions;
 	};
+
+	void setupDebugMessenger() {
+		if (!enableValidationLayers) return;
+		vk::DebugUtilsMessageSeverityFlagsEXT severityFlags(vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
+			vk::DebugUtilsMessageSeverityFlagBitsEXT::eError);
+		vk::DebugUtilsMessageTypeFlagsEXT     messageTypeFlags(
+			vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation);
+		vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{ .messageSeverity = severityFlags,
+																			  .messageType = messageTypeFlags,
+																			  .pfnUserCallback = &debugCallback };
+		debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
+	}
+
+	static VKAPI_ATTR vk::Bool32 VKAPI_CALL debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT severity, 
+														  vk::DebugUtilsMessageTypeFlagsEXT type,
+														  const vk::DebugUtilsMessengerCallbackDataEXT* pCallbackData,
+														  void* pUserData)
+	{
+		std::cerr << "validation layer: type " << to_string(type) << " msg: " << pCallbackData->pMessage << std::endl;
+
+		return vk::False;
+	}
 };
 
 
